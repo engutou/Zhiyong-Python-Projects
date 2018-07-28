@@ -1,8 +1,8 @@
 #! python
 # -*- coding: utf-8 -*-
 
+from util import *
 import numpy as np
-import random
 
 """
     A Hidden Markov Model is represented by a five-tuple (Q, V, A, B, P), where
@@ -15,25 +15,9 @@ import random
 """
 
 
-def sample_ITMD(PMF):
-    """
-    generate one sample using Inverse Transform Method for a discrete distribution with PMF
-    the CDF is [(0, PMF[0]), (1, PMF[0]+PMF[1]), ..., (M-1, PMF[0] + PMF[1] + ... + PMF[M-1])]
-    :param PMF: PMF of the target distribution
-    :return: the index of the sample
-    """
-    x = random.random()
-    s = 0.0
-    for i in range(len(PMF)):
-        s += PMF[i]
-        if x < s:
-            # x = CDF[i] => i = CDF^{-1}(x)
-            return i
-
-
 class HMM:
     def __init__(self, A=[], B=[], P=[]):
-        if (np.size(A, 0) != np.size((A, 1))) or (np.size(A, 0) != np.size(B, 0)) or (np.size(A, 0) != np.size(P)):
+        if (np.size(A, 0) != np.size(A, 1)) or (np.size(A, 0) != np.size(B, 0)) or (np.size(A, 0) != np.size(P)):
             print(np.size(A, 0), np.size(A, 1), np.size(B, 0), np.size(P))
             print('The parameters are not consistent...')
             # exit(-1)
@@ -54,13 +38,13 @@ class HMM:
             print('The parameters are not given, I cannot generate the samples')
             return I, O
         # generate the first hidden state i_0 according to P
-        I.append(sample_ITMD(self.P))
+        I.append(sample_discrete_ITM(self.P))
         # generate the states at time 1 to T-1
         for t in range(1, T):
             i = I[-1]
-            O.append(sample_ITMD(self.B[i, :]))
-            I.append(sample_ITMD(self.A[i, :]))
-        O.append(sample_ITMD(self.B[i, :]))
+            O.append(sample_discrete_ITM(self.B[i, :]))
+            I.append(sample_discrete_ITM(self.A[i, :]))
+        O.append(sample_discrete_ITM(self.B[i, :]))
         return I, O
 
     def evaluate_forward(self, O):
@@ -124,7 +108,7 @@ class HMM:
 
         ##
 
-        Let c(t) = [c_1(t), c_2(t), ..., c_M(t)], a row vector, then we have the equation in matrix form:
+        Let c(t) = [c_0(t), c_1(t), ..., c_{M-1}(t)], a row vector, then we have the equation in matrix form:
           c(t) = A . (c(t+1) * B[:, o_t]), for any 0 <= t <= T-2  --- (eq.2),
         where "A'" is the transition of matrix A
               "." is matrix multiplication (i.e., "." <=> np.dot())
@@ -153,10 +137,61 @@ class HMM:
     def decoding_Vertebi(self, O):
         """
         Given the model and observed samples O, find the most likely hidden states I that generates O
+
+        ##
+
+        Let
+          delta_t(m) = max_{i_0, ..., i_{t-1}}Pr(i_0, ..., i_t = q_m, o_1, ..., o_t | A, B, P), 0 <= t <= T-1, 0 <= m <= M-1
+        Then
+          delta_t(m) = max_{0 <= k <= M-1}[Pr(i_t = q_m, o_t | i_{t-1} = q_k, A, B, P)
+                                           * max_{i_0, ..., i_{t-2}}Pr(i_0, ..., i_{t-1} = q_k, o_1, ..., o_{t-1} | A, B, P)]
+                     = max_{0 <= k <= M-1}[Pr(i_t = q_m, o_t | i_{t-1} = q_k, A, B, P) * delta_{t-1}(k)],
+                     = max_{0 <= k <= M-1}[delta_{t-1}(k) * a_km * b_m(o_t)], 1 <= t <= T-1, 0 <= m <= M-1
+        Let
+          H_t(m) = arg max_{0 <= k <= M-1} [delta_{t-1}(k) * a_km] = arg max_{0 <= k <= M-1} [delta_{t-1}(k) * a_km * b_m(o_t)]
+          H_0(m) = None, for 0 <= m <= M-1
+
+        ##
+
+        Let delta_t = (delta_t(0), delta_t(1), ..., delta_t(M-1)), a row vector.
+        We multiply the k-th row of A by delta_{t-1}(k), multiply the m-th column by b_m(o_t),
+        and then the maximum in each column is delta_t(m).
+
+        ##
+
         :param O:
         :return I: The most likely hidden state samples I = arg max Pr(I|O; A, B, P)
         """
-        pass
+        T = len(O)
+
+        # delta will be a T x M matrix
+        # the (t, m)-th entry is delta_t(m)
+        delta = []
+        H = []
+
+        # for t = 0
+        delta.append(self.P * self.B[:, O[0]])
+        H.append([None] * self.M)
+        # for t = 1, 2, ..., T-1
+        for t in range(1, T):
+            # delta_{t-1}
+            delta_t1 = delta[-1]
+            # A的第k行乘以delta_{t-1}(k)
+            delta_t = np.array([delta_t1[k] * self.A[k, :] for k in range(0, self.M)])
+            # 第m列乘以b_m(o_t)，注意要取转置，因为[column for m in ...]相当于转置一次
+            delta_t = np.array([B[m, O[t]] * delta_t[:, m] for m in range(0, self.M)]).transpose()
+            # 取各列的最大元素值
+            # 以及各列中最大元素所在的位置k*，即到达t时刻状态q_m，需要经过上一个时刻的状态q_k*，i.e. k* = arg max_{k} delta_t(m)
+            delta_t, h = np.amax(delta_t, axis=0), np.argmax(delta_t, axis=0)
+            delta.append(delta_t)
+            H.append(h)
+        # 求T-1时刻使得delta_{T-1}最大的状态q_m*, i.e. m* = arg max_{m} delta_{T-1}(m)
+        I = [np.argmax(delta[T-1])]
+        for t in range(T-2, -1, -1):  # t = T-2, T-1, ..., 0
+            I.append(H[t+1][I[-1]])
+        I.reverse()
+        return I
+
 
     def learning_EM(self, O):
         """
@@ -186,3 +221,4 @@ if '__main__' == __name__:
     # print(hmm_instance.generation(100))
     print(hmm_instance.evaluate_forward(out_samples))
     print(hmm_instance.evaluate_backward(out_samples))
+    print(hmm_instance.decoding_Vertebi(out_samples))
