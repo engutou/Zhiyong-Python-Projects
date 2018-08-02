@@ -18,3 +18,14 @@ def sample_discrete_ITM(PMF):
         if x < s:
             # x = CDF[i] => i = CDF^{-1}(x)
             return i
+
+
+def is_equal_iterable(i1, i2):
+    if len(i1) == len(i2):
+        return all(is_equal(i1[k], i2[k]) for k in range(len(i1)))
+    else:
+        return False
+
+
+def is_equal(f1, f2):
+    return abs(f1 - f2) <= 1e-8
