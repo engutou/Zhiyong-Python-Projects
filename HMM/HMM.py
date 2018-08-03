@@ -40,13 +40,13 @@ class HMM:
             print('The parameters are not given, I cannot generate the samples')
             return I, O
         # generate the first hidden state i_0 according to P
-        I.append(sample_discrete_ITM(self.P))
+        I.append(sample_discrete_ITM(self.P)[0])
         # generate the states at time 1 to T-1
         for t in range(1, T):
             i = I[-1]
-            O.append(sample_discrete_ITM(self.B[i, :]))
-            I.append(sample_discrete_ITM(self.A[i, :]))
-        O.append(sample_discrete_ITM(self.B[i, :]))
+            O.append(sample_discrete_ITM(self.B[i, :])[0])
+            I.append(sample_discrete_ITM(self.A[i, :])[0])
+        O.append(sample_discrete_ITM(self.B[i, :])[0])
         return I, O
 
     def get_forward_prob(self, O):
@@ -305,14 +305,40 @@ class HMM:
         I.reverse()
         return I
 
-    def learning_EM(self, O_list):
+    def learning_EM(self, O_array):
         """
         learn the parameter of the model using Baum-Welch (i.e., EM) algorithm
-        :param O_list: a list of observed samples
+        :param O_array: a list of observed sequences: num_seqs X T
         :return A, B, P: (A, B, P) = arg max Pr(O|A, B, P)
         """
-        D = len(O_list)
+        D = len(O_array)
         pass
+
+    def learning_supervised(self, I_array, O_array):
+        """
+        Leraning the parameters of the model given the complete data
+        :param I_array:
+        :param O_array:
+        :return:
+        """
+        assert np.shape(I_array) == np.shape(O_array)
+
+        # estimate P
+        P = np.histogram(I_array[:, 0], bins=np.arange(self.M + 0.1), density=True)[0]
+
+        # estimate A and B
+        num_seqs, T = np.size(I_array, 0), np.size(I_array, 1)
+        num_hidden_samples1 = np.histogram(I_array[:, 0:T-1], bins=np.arange(self.M + 0.1))[0]
+        num_hidden_samples2 = num_hidden_samples1 + np.histogram(I_array[:, -1], bins=np.arange(self.M + 0.1))[0]
+        A, B = np.zeros((self.M, self.M)), np.zeros((self.M, self.N))
+        for i in range(num_seqs):
+            for t in range(T-1):
+                A[I_array[i, t], I_array[i, t+1]] += 1
+                B[I_array[i, t], O_array[i, t]] += 1
+            B[I_array[i, -1], O_array[i, -1]] += 1
+        A = np.array([A[m, :]/num_hidden_samples1[m] for m in range(self.M)])
+        B = np.array([B[m, :]/num_hidden_samples2[m] for m in range(self.M)])
+        return A, B, P
 
 
 def test(hmm_instance, out_samples):
@@ -334,6 +360,18 @@ def test(hmm_instance, out_samples):
         assert is_equal_iterable(single_state_prob[t, :], np.sum(double_state_prob[t, :, :], axis=1))
 
 
+def test_learning(hmm_instance):
+    print('\n=============test learning algorithm=============')
+    num_seqs, T = 1000, 1000
+    I_list, O_list = [], []
+    for i in range(num_seqs):
+        hidden_samples, out_samples = hmm_instance.generation(T)
+        I_list.append(hidden_samples)
+        O_list.append(out_samples)
+    A, B, P = hmm_instance.learning_supervised(np.array(I_list), np.array(O_list))
+    print(A - hmm_instance.A, '\n', B - hmm_instance.B, '\n', P - hmm_instance.P)
+
+
 if '__main__' == __name__:
     # 李航-统计学习方法中的盒子与球模型
     A = np.array([(0.5, 0.2, 0.3), (0.3, 0.5, 0.2), (0.2, 0.3, 0.5)])
@@ -341,23 +379,18 @@ if '__main__' == __name__:
     P = np.array((0.2, 0.4, 0.4))
     hmm_instance = HMM(A, B, P)
 
-    # test 1:
-    print('\n=============test 1=============')
-    out_samples = (0, 1, 0)
-    test(hmm_instance, out_samples)
+    test_learning(hmm_instance)
 
-    # print('\n=============test 2=============')
-    # hidden_samples, out_samples = hmm_instance.generation(10)
-    # print(hidden_samples)
-    # print(out_samples)
+    # print('\n=============test 1=============')
+    # out_samples = (0, 1, 0)
     # test(hmm_instance, out_samples)
 
-    print('\n=============test 3=============')
-    A = np.array([[1.0/3] * 3] * 3)
-    B = np.array([[0.5, 0.5], [0.75, 0.25], [0.25, 0.75]])
-    P = np.array([1.0/3] * 3)
-    hmm_instance = HMM(A, B, P)
-
-    out_samples = [x-1 for x in [1, 1, 1, 1, 2, 1, 2, 2, 2, 2]]
-    # 隐藏状态序列的最大后验估计为[1, 1, 1, 1, 2, 1, 2, 2, 2, 2]
-    test(hmm_instance, out_samples)
+    # print('\n=============test 3=============')
+    # A = np.array([[1.0/3] * 3] * 3)
+    # B = np.array([[0.5, 0.5], [0.75, 0.25], [0.25, 0.75]])
+    # P = np.array([1.0/3] * 3)
+    # hmm_instance = HMM(A, B, P)
+    #
+    # out_samples = [x-1 for x in [1, 1, 1, 1, 2, 1, 2, 2, 2, 2]]
+    # # 隐藏状态序列的最大后验估计为[1, 1, 1, 1, 2, 1, 2, 2, 2, 2]
+    # test(hmm_instance, out_samples)
